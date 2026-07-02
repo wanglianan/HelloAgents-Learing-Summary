@@ -142,18 +142,98 @@
    - 在7.2.3节中介绍了自动检测机制的三个优先级。请分析：如果同时设置了 `OPENAI_API_KEY` 和 `LLM_BASE_URL="http://localhost:11434/v1"`，框架最后会选择哪个提供商？这种优先级设计是否合理？
    - 除了本章介绍的 `VLLM` 和 `Ollama`，还有 `SGLang` 等其他本地模型部署方案。请先搜索并了解 `SGLang` 的基本信息和特点，然后对比 `VLLM`、`SGLang` 和 `Ollama` 这三者在易用性、资源占用、推理速度、推理精度等方面的优劣。
   
-   **答：**
+   **7.2.1答：**
    - 通过继承方式实现新模型供应商：硅基流动
-   - 
+   ```Python
+   class GeminiLLM(HelloAgentsLLM):
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        provider: Optional[str] = "auto",
+        **kwargs
+    ):
+        # 如果是 Gemini Provider
+        if provider == "gemini":
+            print("正在使用自定义的 Gemini Provider")
+
+            self.provider = "gemini"
+
+            # 读取 Gemini 专用环境变量
+            self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+            self.base_url = base_url or os.getenv(
+                "GEMINI_BASE_URL",
+                "https://generativelanguage.googleapis.com/v1beta/"
+            )
+
+            if not self.api_key:
+                raise ValueError(
+                    "Gemini API key not found. "
+                    "Please set GEMINI_API_KEY environment variable."
+                )
+
+            # 模型与参数
+            self.model = model or os.getenv("GEMINI_MODEL_ID") or "gemini-1.5-pro-latest"
+            self.temperature = kwargs.get("temperature", 0.7)
+            self.max_tokens = kwargs.get("max_tokens")
+            self.timeout = kwargs.get("timeout", 60)
+
+            # 创建 OpenAI 兼容客户端
+            self._client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=self.timeout
+            )
+
+        else:
+            # 非 gemini，走 HelloAgentsLLM 原有逻辑
+            super().__init__(
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                provider=provider,
+                **kwargs
+            )
+   ```
+   
+    **7.2.2答：**
+   
+   - 框架最终会选择 openai作为提供商。合理，根据重要程度进行划分优先级符合实际场景，而API_KEY是调用大模型最关键的参数。
+
+    **7.2.3答：**
+   ### 易用性：
+
+   **Ollama：**最简单，一键安装，几乎零配置，非常适合新手和本地快速验证。
+
+   **VLLM：**中等偏复杂，通过 Python 或 Docker 部署，需一定命令行和环境配置经验。
+
+   **SGLan：**偏专业，涉及自身领域特定语言或高级参数，学习和调优门槛最高。
+
+   ### 资源占用：
+
+   **Ollama：**低，默认使用 INT4 等量化模型，显存占用极小，适合本地实验。
+
+   **VLLM：**高，通常加载 FP16/BF16 原始精度模型，默认预加载全量参数到显存，偏向生产级。
+
+   **SGLang：**高，偏向加载高精度模型并利用 GPU 显存，支持复杂的缓存机制，偏向生产级。
+
+   ### 推理速度：
+
+   **Ollama：**中等，单用户响应快，但**并发能力弱**。
+
+   **VLLM：**纯文本、高并发下速度非常快。
+
+   **SGLang：**在多轮对话、重复前缀、结构化约束场景下更快。
 
    
-4. 在7.3节中，我们实现了 `Message` 类、`Config` 类和 `Agent` 基类。请分析：
+5. 在7.3节中，我们实现了 `Message` 类、`Config` 类和 `Agent` 基类。请分析：
 
    - `Message` 类使用了 `Pydantic` 的 `BaseModel` 进行数据验证。这种设计在实际应用中有哪些优势？
    - `Agent` 基类定义了 `run` 和 `_execute` 两个方法，其中 `run` 是公开接口，`_execute` 是抽象方法。这种设计模式叫什么？有什么好处？
    - 在 `Config` 类中，我们使用了单例模式。请解释什么是单例模式，为什么配置管理需要使用单例模式？如果不使用单例会导致什么问题？
 
-5. 在7.4节中，我们动手进行了四种 `Agent` 范式的框架化实现。
+6. 在7.4节中，我们动手进行了四种 `Agent` 范式的框架化实现。
 
    > <strong>提示</strong>：这是一道实践题，建议实际操作
 
@@ -161,7 +241,7 @@
    - `ReflectionAgent` 实现了"执行-反思-优化"循环。请扩展这个实现，添加一个"质量评分"机制：在每次反思后，让 `LLM` 对当前版本的输出打分，只有分数低于阈值时才继续优化，否则提前终止。
    - 请设计并实现一个新的 `Agent` 范式 `Tree-of-Thought Agent`，要求继承 `Agent` 基类，它能够在每一步生成多个可能的思考路径，然后选择最优路径继续。
 
-6. 在7.5节中，我们构建了工具系统。请思考以下问题：
+7. 在7.5节中，我们构建了工具系统。请思考以下问题：
 
    - `BaseTool` 类定义了 `execute` 抽象方法，所有工具都必须实现这个方法。请解释为什么要强制所有工具实现统一的接口？如果某个工具需要返回多个值（如搜索工具返回标题、摘要、链接），应该如何设计？
    - 在7.5.3节中实现了工具链（`ToolChain`）。请设计一个实际的应用场景，需要串联至少3个工具，并画出工具链的执行流程图。
